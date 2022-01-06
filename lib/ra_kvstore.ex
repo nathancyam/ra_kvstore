@@ -5,12 +5,14 @@ defmodule RaKvstore do
 
   @server_reference :ra_kv
 
-  def write(key, value) do
+  alias RaKvstore.State
+
+  def put(key, value) do
     cmd = {:write, key, value}
 
     case :ra.process_command(@server_reference, cmd) do
-      {:ok, term, _leader} ->
-        {:ok, term}
+      {:ok, _term, leader} ->
+        {:ok, leader}
 
       {:timeout, _err} ->
         :timeout
@@ -20,10 +22,10 @@ defmodule RaKvstore do
     end
   end
 
-  def read(key) do
-    case :ra.consistent_query(@server_reference, &Map.get(&1, key)) do
-      {:ok, val, _leader} ->
-        {:ok, val}
+  def get(key) do
+    case :ra.consistent_query(@server_reference, &State.read_store(&1, key)) do
+      {:ok, val, leader} ->
+        {:ok, val, leader}
 
       {:timeout, _} ->
         :timeout

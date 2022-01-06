@@ -7,12 +7,18 @@ defmodule RaKvstoreApp.Application do
 
   @impl true
   def start(_type, _args) do
+    topologies = [
+      app: [
+        strategy: Cluster.Strategy.Gossip
+      ]
+    ]
+
     children = [
       # Starts a worker by calling: RaKvstore.Worker.start_link(arg)
       # {RaKvstore.Worker, arg}
+      RaKvstore.Bootstrap,
+      {Cluster.Supervisor, [topologies, [name: RaKvstoreApp.ClusterSupervisor]]}
     ]
-
-    :ra.start()
 
     # See https://hexdocs.pm/elixir/Supervisor.html
     # for other strategies and supported options

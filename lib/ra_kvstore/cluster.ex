@@ -1,71 +1,71 @@
 defmodule RaKvstore.Cluster do
   @moduledoc false
 
+  alias RaKvstore.Config
+
   require Logger
 
   @cluster_name "ra_kv"
-  @machine {:module, RaKvstore.State, %{}}
 
-  def start do
-    nodes =
-      for node_str <- Application.get_env(:ra_kvstore, :nodes, []) do
-        String.to_atom(node_str)
-      end
-
-    Logger.info("starting or joining raft cluster with #{inspect(nodes)}")
-    start_leader(nodes)
+  def start_leader(nodes \\ []) do
+    machine = {:module, RaKvstore.State, %{nodes: nodes}}
+    :ra.start_cluster(:default, @cluster_name, machine, [{:ra_kv, node()}])
   end
 
-  def start_leader(nodes) do
-    [leader | _followers] = Enum.sort(nodes)
-    Logger.info("Expected leader node: #{leader}")
+  def start_follower do
+    machine = {:module, RaKvstore.State, %{nodes: []}}
+    leader = leader_definition()
+    follower = {:ra_kv, node()}
 
-    if leader == node() do
-      Logger.info("configuring leader node: #{leader}")
-      :ok = wait_for_nodes(nodes)
-      :timer.sleep(2_000)
+    Logger.info("starting and adding follower: #{inspect(follower)}, leader: #{inspect(leader)}")
 
-      ra_nodes =
-        for n <- nodes do
-          {:ra_kv, n}
-        end
+    case add_member(leader, follower) do
+      :ok ->
+        Logger.info("starting follower server")
+        :ra.start_server(:default, @cluster_name, follower, machine, [leader])
 
-      {:ok, server_started, _server_failed} =
-        log_start_cluster(:ra.start_cluster(:default, @cluster_name, @machine, ra_nodes))
-
-      {:ok, hd(server_started)}
-    else
-      Logger.info("Follower node: #{node()}")
-      :ok
+      {:error, :already_member} ->
+        Logger.info("restarting follower server")
+        :ra.restart_server(follower)
     end
   end
 
-  def log_start_cluster({:ok, servers_started, servers_failed}) do
-    Logger.info("servers started: #{inspect(servers_started)}")
+  defp add_member(leader, follower) do
+    case :ra.add_member(leader, follower) do
+      {:ok, _, _} ->
+        Logger.info("added follower as cluster member")
+        :ok
 
-    unless Enum.empty?(servers_failed) do
-      Logger.warn("servers failed to start: #{inspect(servers_failed)}")
-      {:error, :incomplete_cluster}
-    else
-      {:ok, servers_started, servers_failed}
+      {:error, :already_member} = err ->
+        Logger.warn("follower is already an member")
+        err
     end
   end
 
-  def wait_for_nodes(done) when done == [] do
-    Logger.info("all nodes have been connected")
-    :ok
-  end
+  @spec leader_definition() :: {atom(), atom()}
+  defp leader_definition do
+    case :ra.members(:ra_kv) do
+      {:ok, _members, leader} ->
+        Logger.info("found :ra leader via members/1")
+        leader
 
-  def wait_for_nodes([node | rem] = all_nodes) do
-    case Node.connect(node) do
-      true ->
-        Logger.info("Connected to node: #{node}, connecting to next node...")
-        wait_for_nodes(rem)
+      {:timeout, _} ->
+        Logger.warn(":ra timeout, using configured leader node")
+        {:ra_kv, Config.leader_node()}
 
-      false ->
-        Logger.error("Could not connect to node: #{node}, Sleeping...")
-        :timer.sleep(1_000)
-        wait_for_nodes(all_nodes)
+      {:error, _} ->
+        Logger.warn(":ra error, using configured leader node")
+        {:ra_kv, Config.leader_node()}
     end
   end
+
+  # def connect_nodes(nodes) do
+  #   Enum.each(nodes, fn node ->
+  #     Node.connect(node)
+  #   end)
+  # end
+
+  # def start_timer_interval(nodes) do
+  #   :timer.apply_interval(:timer.seconds(5), __MODULE__, :connect_nodes, [nodes])
+  # end
 end

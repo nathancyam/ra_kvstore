@@ -34,4 +34,21 @@ defmodule RaKvstore do
         err
     end
   end
+
+  def local_get(key) do
+    query_result(:ra.local_query(@server_reference, &State.read_store(&1, key)))
+  end
+
+  defp query_result(result) do
+    case result do
+      {:ok, val, leader} ->
+        {:ok, val, leader}
+
+      {:timeout, _} ->
+        :timeout
+
+      {:error, _} = err ->
+        err
+    end
+  end
 end
